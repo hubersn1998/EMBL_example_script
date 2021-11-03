@@ -1,0 +1,172 @@
+I REVOMED FILE NAMES JUST FOR THE EXAMPLE
+
+########
+#
+# Multi-omics project
+# data: training dataset - 70%  data - All Omics
+# script: tune multi-block sPLS-DA 
+# R version 4.0.2 (2020-06-22)
+#
+########
+
+#install latest version of mixomicsmixOmics 6.12.1
+# if (!requireNamespace("BiocManager", quietly = TRUE))
+#   install.packages("BiocManager")
+# 
+# BiocManager::install("mixOmics")
+
+#r-packages
+require(mixOmics)
+
+############
+#
+# Read data
+#
+############
+
+setwd("DIRECTORY/DATA")
+#load training data (lisa)
+load("traind_Metabolomics.RData")
+load("traind_Epigenomics.RData")
+load("traind_Genomics.RData")
+
+setwd("DIRECTOY/OUTPUT")
+#read in PLS correlations
+PLSc <- read.table("FILE.txt", header=T, sep=" ")
+
+#read in optimal Ncomp multi-block PLS-DA model(s)
+Ncomp.plsda <- read.table("FILE.txt", header = T, sep = " ")
+
+
+############
+#
+# Prepare data
+# Metabolomics
+#
+############
+
+#Extension as factor
+traind_Metabolomics$Extension <- droplevels(traind_Metabolomics$Extension)
+traind_Metabolomics$Extension <- as.numeric(factor(traind_Metabolomics$Extension, 
+                                                   levels = c("first multiple in family","2nd multiple in family","3rd multiple in family","4th multiple in family")))
+#Familynumber as numberic (1:nunique)
+traind_Metabolomics$FamilyNumber <- as.numeric(as.factor(traind_Metabolomics$FamilyNumber))
+#ADHD status as numeric
+traind_Metabolomics$ADHDvariable <- as.numeric(factor(traind_Metabolomics$ADHDvariable, 
+                                                      levels = c("control","case")))-1
+
+#add ADHD status to rownames
+rownames(traind_Metabolomics) <- c(paste(traind_Metabolomics$FamilyNumber,
+                                         traind_Metabolomics$Extension,
+                                         traind_Metabolomics$ADHDvariable,sep="_"))
+
+#order by rownames
+traind_Metabolomics <- traind_Metabolomics[order(rownames(traind_Metabolomics)),]
+
+############
+#
+# Prepare data
+# Epigenomics
+#
+############
+
+#Extension as factor
+traind_Epigenomics_10p$Extension <- droplevels(traind_Epigenomics_10p$Extension)
+traind_Epigenomics_10p$Extension <- as.numeric(factor(traind_Epigenomics_10p$Extension, 
+                                                      levels = c("first multiple in family","2nd multiple in family","3rd multiple in family","4th multiple in family")))
+#Familynumber as numberic (1:nunique)
+traind_Epigenomics_10p$FamilyNumber <- as.numeric(as.factor(traind_Epigenomics_10p$FamilyNumber))
+#ADHD status as numeric
+traind_Epigenomics_10p$ADHDvariable <- as.numeric(factor(traind_Epigenomics_10p$ADHDvariable, 
+                                                         levels = c("control","case")))-1
+
+#add ADHD status to rownames
+rownames(traind_Epigenomics_10p) <- c(paste(traind_Epigenomics_10p$FamilyNumber,
+                                            traind_Epigenomics_10p$Extension,
+                                            traind_Epigenomics_10p$ADHDvariable,sep="_"))
+
+#order by rownames
+traind_Epigenomics_10p <- traind_Epigenomics_10p[order(rownames(traind_Epigenomics_10p)),]
+
+############
+#
+# Prepare data
+# GEnomics
+#
+############
+
+#Extension as factor
+traind_Genomics$Extension <- droplevels(traind_Genomics$Extension)
+traind_Genomics$Extension <- as.numeric(factor(traind_Genomics$Extension, 
+                                               levels = c("first multiple in family","2nd multiple in family","3rd multiple in family","4th multiple in family")))
+#Familynumber as numberic (1:nunique)
+traind_Genomics$FamilyNumber <- as.numeric(as.factor(traind_Genomics$FamilyNumber))
+#ADHD status as numeric
+traind_Genomics$ADHDvariable <- as.numeric(factor(traind_Genomics$ADHDvariable, 
+                                                  levels = c("control","case")))-1
+
+#add ADHD status to rownames
+rownames(traind_Genomics) <- c(paste(traind_Genomics$FamilyNumber,
+                                     traind_Genomics$Extension,
+                                     traind_Genomics$ADHDvariable,sep="_"))
+
+#order by rownames
+traind_Genomics <- traind_Genomics[order(rownames(traind_Genomics)),]
+
+############
+#
+# set-up DIABLO model
+#
+############
+
+# list data genomics, epigenomics, metabolomics
+dat.all = list(metabolomics = traind_Metabolomics[,11:ncol(traind_Metabolomics)],
+               epigenomics = traind_Epigenomics_10p[,13:ncol(traind_Epigenomics_10p)],
+               genomics = traind_Genomics[,11:ncol(traind_Genomics)])
+
+#Y = output (same participants in all so does not matter which omics we assign)
+Y = traind_Epigenomics_10p$ADHDvariable
+
+#rm original files
+rm(traind_Metabolomics,traind_Epigenomics_10p,traind_Genomics)
+gc()
+
+#design matrix all metabolomics
+design.all <- matrix(NA, ncol = length(dat.all), nrow = length(dat.all),
+                     dimnames = list(names(dat.all), names(dat.all)))
+#fill in with cors between average PLS
+design.all[1,] <- c(0,PLSc$r[which(PLSc$blocks=="DNAMethylation_Metabolomics")],PLSc$r[which(PLSc$blocks=="PolygenicScores_Metabolomics")])
+design.all[2,] <- c(PLSc$r[which(PLSc$blocks=="DNAMethylation_Metabolomics")],0,PLSc$r[which(PLSc$blocks=="PolygenicScores_DNAMethylation")])
+design.all[3,] <- c(PLSc$r[which(PLSc$blocks=="PolygenicScores_Metabolomics")],PLSc$r[which(PLSc$blocks=="PolygenicScores_DNAMethylation")],0)
+
+############
+#
+# Tune multi-block sPLS-DA
+# All Omics
+#
+############
+
+#create list of Nvariables to test
+# use the number of variables selected in the single omics as inspiration
+#metabolomics - selected single omics: 1,89,1
+#epigenomics: selected single omics: 7,5,800,60,450,300
+#genomics - selected single omics: 35,1
+all.keepX = list (metabolomics = c(1,5,30,90),
+                  epigenomics = c(5,7,60,350,800),
+                  genomics = c(1,5,10,20,35))
+
+#set-up parallelisation (BiocParallel should have been installed and loaded when we installed/loaded mixomics 
+# – check if it’s among the installed packages before you run!). Replace X with the number of cpus you want to use.
+BPPARAM <- BiocParallel::MulticoreParam(workers = 15)
+
+#tune multi-block sPLS-DA
+tune.diablo.all = tune.block.splsda(X = dat.all, Y = Y, ncomp = Ncomp.plsda$keep.comp,
+                                    test.keepX = all.keepX, design = design.all,
+                                    validation = 'Mfold',folds = 5, nrepeat = 50,progressBar = T,
+                                    dist = Ncomp.plsda$keep.BER.name,BPPARAM = BPPARAM)
+
+#save output
+saveRDS(tune.diablo.all,
+        file = paste(as.character(Sys.Date()),
+                     "Tune_File.rds",sep=""))
+
